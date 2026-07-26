@@ -32,6 +32,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 
+import math
+
+QPSK_SCALE = 1.0 / math.sqrt(2.0)
+
+class QPSKInput(nn.Module):
+    """Snaps every input pixel to {-0.7071, +0.7071} before the network."""
+    def forward(self, x):
+        snapped = torch.sign(x)
+        snapped[snapped == 0] = 1.0
+        return snapped * QPSK_SCALE
+
+
 from torch.autograd import Variable
 
 __all__ = ['ResNet', 'resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110', 'resnet1202']
@@ -87,6 +99,7 @@ class ResNet(nn.Module):
     def __init__(self, block, num_blocks, num_classes=10):
         super(ResNet, self).__init__()
         self.in_planes = 16
+        self.qpsk_input = QPSKInput()
 
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(16)
@@ -107,7 +120,8 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.qpsk_input(x)
+        out = F.relu(self.bn1(self.conv1(out)))
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
