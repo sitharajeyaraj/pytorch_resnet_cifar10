@@ -2,6 +2,7 @@ import argparse
 import os
 import shutil
 import time
+from xml.parsers.expat import model
 
 import torch
 import torch.nn as nn
@@ -77,7 +78,9 @@ def main():
             checkpoint = torch.load(args.resume, map_location='cuda')
             args.start_epoch = checkpoint.get('epoch', 0)
             best_prec1 = checkpoint['best_prec1']
-            model.load_state_dict(checkpoint['state_dict'])
+            sd = checkpoint['state_dict']
+            sd = {k.replace('module.', ''): v for k, v in sd.items()}
+            model.module.load_state_dict(sd)
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.evaluate, checkpoint.get('epoch', 0)))
         else:
