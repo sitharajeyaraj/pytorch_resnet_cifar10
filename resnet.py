@@ -44,6 +44,50 @@ class QPSKInput(nn.Module):
         return snapped * QPSK_SCALE
 
 
+# ============================================================
+# PAM4 ACTIVATION QUANTIZER
+# ============================================================
+
+PAM4_LEVELS = 4
+ACT_CLIP    = 3.0
+ACT_UNIT    = ACT_CLIP / (PAM4_LEVELS - 1)   # = 1.0
+# levels: {-3, -1, +1, +3} x ACT_UNIT
+
+class PAM4ActivationSTE(torch.autograd.Function):
+    """
+    Forward:  snap to nearest PAM4 level {-3,-1,+1,+3} x ACT_UNIT
+    Backward: STE — pass gradient through if within clip range
+    """
+    @staticmethod
+    def forward(ctx, x):
+        ctx.save_for_backward(x)
+        l = 2.0 * torch.floor(x / (2.0 * ACT_UNIT)) + 1.0
+        l = torch.clamp(l, -(PAM4_LEVELS - 1), (PAM4_LEVELS - 1))
+        return l * ACT_UNIT
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        x, = ctx.saved_tensors
+        mask = (x.abs() <= ACT_CLIP).float()
+        return grad_output * mask
+
+
+class PAMActivation(nn.Module):
+    """
+    Replaces ReLU in BasicBlock.
+    quantize=False -> behaves as ReLU (Stage 1 and 2)
+    quantize=True  -> snaps to PAM4 levels (Stage 3 and 4)
+    """
+    def __init__(self):
+        super().__init__()
+        self.quantize = False
+
+    def forward(self, x):
+        if not self.quantize:
+            return F.relu(x)
+        return PAM4ActivationSTE.apply(x)
+
+
 from torch.autograd import Variable
 
 __all__ = ['ResNet', 'resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110', 'resnet1202']
@@ -72,6 +116,8 @@ class BasicBlock(nn.Module):
         self.bn1 = nn.BatchNorm2d(planes)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(planes)
+        self.act1 = PAMActivation()
+        self.act2 = PAMActivation()
 
         self.shortcut = nn.Sequential()
         if stride != 1 or in_planes != planes:
@@ -88,10 +134,10 @@ class BasicBlock(nn.Module):
                 )
 
     def forward(self, x):
-        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.act1(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
         out += self.shortcut(x)
-        out = F.relu(out)
+        out = self.act2(out)
         return out
 
 
