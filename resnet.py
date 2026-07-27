@@ -49,20 +49,20 @@ class QPSKInput(nn.Module):
 # ============================================================
 
 PAM4_LEVELS = 4
-ACT_CLIP    = 3.0
-ACT_UNIT    = ACT_CLIP / (PAM4_LEVELS - 1)   # = 1.0
-# levels: {-3, -1, +1, +3} x ACT_UNIT
+ACT_CLIP    = 8.0    # cover full positive range {+1,+3,+5,+7}
+ACT_UNIT    = 1.0    # spacing between levels
+# levels: {+1, +3, +5, +7} x ACT_UNIT  (positive only — respects ReLU history)
 
 class PAM4ActivationSTE(torch.autograd.Function):
     """
-    Forward:  snap to nearest PAM4 level {-3,-1,+1,+3} x ACT_UNIT
+    Forward:  snap to nearest PAM4 level {+1,+3,+5,+7} x ACT_UNIT (positive only)
     Backward: STE — pass gradient through if within clip range
     """
     @staticmethod
     def forward(ctx, x):
         ctx.save_for_backward(x)
         l = 2.0 * torch.floor(x / (2.0 * ACT_UNIT)) + 1.0
-        l = torch.clamp(l, -(PAM4_LEVELS - 1), (PAM4_LEVELS - 1))
+        l = torch.clamp(l, 1.0, 2.0 * PAM4_LEVELS - 1.0)
         return l * ACT_UNIT
 
     @staticmethod
