@@ -47,14 +47,14 @@ class Act8LevelSTE(torch.autograd.Function):
         # Pass gradient through only where input is inside clip range
         # Outside [-8, +8] the quantizer always gives the outermost level
         # so gradient there carries no useful information
-        mask = (x.abs() <= 8.0).float()
+        mask = (x.abs() <= 2.0).float()
         return grad_out * mask, None               # None: levels has no gradient
 
 
 class Activation8Level(nn.Module):
     def __init__(self):
         super(Activation8Level, self).__init__()
-        levels = torch.linspace(-8.0, 8.0, 8)
+        levels = torch.linspace(-2.0, 2.0, 8)
         self.register_buffer('levels', levels)
 
     def forward(self, x):
