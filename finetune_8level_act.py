@@ -3,11 +3,10 @@
 finetune_8level_act.py
 =======================
 Fine-tunes ResNet20 with:
-  - 8-level input quantization      (already trained, loaded from checkpoint)
-  - 8-level activation quantization (new — replaces ReLU with STE quantizer)
-  - Float weights                   (still not quantized)
-
-Starts from the best 8-level input checkpoint (89.02%).
+  - 8-level input quantization      (loaded from checkpoint)
+  - 8-level activation quantization (replaces ReLU with STE quantizer)
+  - Float weights                   (not yet quantized)
+  - Fixed learning rate             (no scheduler)
 
 Run:
     conda activate qnn
@@ -24,12 +23,10 @@ from torch.utils.data import DataLoader
 import resnet
 
 # ── Config ───────────────────────────────────────────────────
-LOAD_PATH  = './8level_input_best.pth'    # start from input-quantized checkpoint
-SAVE_PATH  = './8level_act_best.pth'      # save best activation-quantized model
+LOAD_PATH  = './8level_input_best.pth'
+SAVE_PATH  = './8level_act_best.pth'
 EPOCHS     = 100
 LR         = 1e-3
-LR_MILESTONES = [40, 70]
-LR_DECAY   = 0.1
 BATCH_SIZE = 128
 WORKERS    = 2
 
@@ -63,27 +60,23 @@ test_loader = DataLoader(
 # ── Model ─────────────────────────────────────────────────────
 model = resnet.resnet20().to(device)
 
-# Load from 8-level input checkpoint
 ckpt       = torch.load(LOAD_PATH, map_location=device)
 state_dict = ckpt['state_dict'] if 'state_dict' in ckpt else ckpt
 state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
-
-# strict=False because the new model has extra parameters
-# (act1, act2 buffers) that didn't exist in the old checkpoint
 missing, unexpected = model.load_state_dict(state_dict, strict=False)
 print(f"Loaded checkpoint : {LOAD_PATH}")
-print(f"Missing keys      : {missing}")      # expect act buffers — OK
-print(f"Unexpected keys   : {unexpected}")   # expect none
+print(f"Missing keys      : {missing}")
+print(f"Unexpected keys   : {unexpected}")
 
 print(f"\nQuantization setup:")
 print(f"  Input      : 8 levels {model.input_quantizer.levels.tolist()}")
 print(f"  Activations: 8 levels {model.act1.levels.tolist()}")
 print(f"  Weights    : float (not yet quantized)")
+print(f"  LR         : {LR} (fixed, no scheduler)")
 
 # ── Training ──────────────────────────────────────────────────
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(model.parameters(), lr=LR, momentum=0.9, weight_decay=1e-4)
-scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=LR_MILESTONES, gamma=LR_DECAY)
 
 best_acc = 0.0
 print(f"\nStarting fine-tuning for {EPOCHS} epochs ...\n")
@@ -120,16 +113,12 @@ for epoch in range(1, EPOCHS + 1):
         torch.save({'state_dict': model.state_dict(),
                     'epoch': epoch, 'acc': best_acc}, SAVE_PATH)
 
-    scheduler.step()
-
     print(f"Epoch {epoch:3d}/{EPOCHS}  "
           f"Train: {train_acc:.2f}%  "
           f"Test: {test_acc:.2f}%  "
-          f"Best: {best_acc:.2f}%  "
-          f"LR: {scheduler.get_last_lr()[0]:.5f}")
+          f"Best: {best_acc:.2f}%")
 
 print(f"\nDone. Best accuracy: {best_acc:.2f}%")
-print(f"Checkpoint saved  : {SAVE_PATH}")
 print(f"\nSummary so far:")
 print(f"  Float baseline        : 91.47%")
 print(f"  + 8-level input       : 89.02%")
