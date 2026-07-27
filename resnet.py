@@ -11,7 +11,7 @@ __all__ = ['ResNet', 'resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110'
 # 8-LEVEL INPUT QUANTIZER
 # Snaps each normalized pixel to the nearest of 8 uniformly
 # spaced levels between -2.75 and +2.75.
-# No tanh. No STE needed — inputs are data, not parameters.
+# No STE needed — inputs are data, not learnable parameters.
 # ============================================================
 class Input8Level(nn.Module):
     def __init__(self):
@@ -20,12 +20,48 @@ class Input8Level(nn.Module):
         self.register_buffer('levels', levels)
 
     def forward(self, x):
-        # x shape: [batch, 3, 32, 32]
-        dists = (x.unsqueeze(-1) - self.levels).abs()  # [batch, 3, 32, 32, 8]
-        idx   = dists.argmin(dim=-1)                   # [batch, 3, 32, 32]
-        return self.levels[idx]                        # [batch, 3, 32, 32]
+        dists = (x.unsqueeze(-1) - self.levels).abs()  # [B, 3, 32, 32, 8]
+        idx   = dists.argmin(dim=-1)                   # [B, 3, 32, 32]
+        return self.levels[idx]                        # [B, 3, 32, 32]
 
 
+# ============================================================
+# 8-LEVEL ACTIVATION QUANTIZER WITH STE
+# Replaces ReLU after every BN.
+# Forward : hard snap to nearest of 8 levels in [-8, +8]
+# Backward: straight-through gradient inside clip window
+# STE is needed because activations are in the gradient path
+# ============================================================
+class Act8LevelSTE(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, x, levels):
+        ctx.save_for_backward(x)
+        dists = (x.unsqueeze(-1) - levels).abs()   # find nearest level
+        idx   = dists.argmin(dim=-1)
+        return levels[idx]                         # hard snap
+
+    @staticmethod
+    def backward(ctx, grad_out):
+        x, = ctx.saved_tensors
+        # Pass gradient through only where input is inside clip range
+        # Outside [-8, +8] the quantizer always gives the outermost level
+        # so gradient there carries no useful information
+        mask = (x.abs() <= 8.0).float()
+        return grad_out * mask, None               # None: levels has no gradient
+
+
+class Activation8Level(nn.Module):
+    def __init__(self):
+        super(Activation8Level, self).__init__()
+        levels = torch.linspace(-8.0, 8.0, 8)
+        self.register_buffer('levels', levels)
+
+    def forward(self, x):
+        return Act8LevelSTE.apply(x, self.levels)
+
+
+# ============================================================
 def _weights_init(m):
     classname = m.__class__.__name__
     if isinstance(m, nn.Linear) or isinstance(m, nn.Conv2d):
@@ -47,9 +83,14 @@ class BasicBlock(nn.Module):
     def __init__(self, in_planes, planes, stride=1, option='A'):
         super(BasicBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(planes)
+        self.bn1   = nn.BatchNorm2d(planes)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(planes)
+        self.bn2   = nn.BatchNorm2d(planes)
+
+        # One activation quantizer per BN output inside the block
+        self.act1  = Activation8Level()   # replaces F.relu after bn1
+        self.act2  = Activation8Level()   # replaces F.relu after bn2 + skip
+
         self.shortcut = nn.Sequential()
         if stride != 1 or in_planes != planes:
             if option == 'A':
@@ -62,10 +103,14 @@ class BasicBlock(nn.Module):
                 )
 
     def forward(self, x):
-        out = F.relu(self.bn1(self.conv1(x)))
+        # conv1 → BN → quantize  (was: conv1 → BN → ReLU)
+        out = self.act1(self.bn1(self.conv1(x)))
+
+        # conv2 → BN → skip add → quantize  (was: conv2 → BN → skip add → ReLU)
         out = self.bn2(self.conv2(out))
-        out += self.shortcut(x)
-        out = F.relu(out)
+        out = out + self.shortcut(x)
+        out = self.act2(out)
+
         return out
 
 
@@ -74,11 +119,13 @@ class ResNet(nn.Module):
         super(ResNet, self).__init__()
         self.in_planes = 16
 
-        # 8-level input quantizer — applied before anything else
+        # Input quantizer — first thing in the forward pass
         self.input_quantizer = Input8Level()
 
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(16)
+        self.bn1   = nn.BatchNorm2d(16)
+        self.act1  = Activation8Level()   # replaces F.relu after stem BN
+
         self.layer1 = self._make_layer(block, 16, num_blocks[0], stride=1)
         self.layer2 = self._make_layer(block, 32, num_blocks[1], stride=2)
         self.layer3 = self._make_layer(block, 64, num_blocks[2], stride=2)
@@ -87,20 +134,25 @@ class ResNet(nn.Module):
 
     def _make_layer(self, block, planes, num_blocks, stride):
         strides = [stride] + [1]*(num_blocks-1)
-        layers = []
+        layers  = []
         for stride in strides:
             layers.append(block(self.in_planes, planes, stride))
             self.in_planes = planes * block.expansion
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        # Quantize input to 8 levels before entering the network
+        # Step 1: quantize input to 8 levels
         out = self.input_quantizer(x)
 
-        out = F.relu(self.bn1(self.conv1(out)))
+        # Step 2: stem conv → BN → quantize  (was: relu)
+        out = self.act1(self.bn1(self.conv1(out)))
+
+        # Step 3: residual blocks (each block has its own quantizers)
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
+
+        # Step 4: global average pool → classify
         out = F.avg_pool2d(out, out.size()[3])
         out = out.view(out.size(0), -1)
         out = self.linear(out)
