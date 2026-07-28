@@ -61,6 +61,10 @@ class Act8LevelTanhGrad(torch.autograd.Function):
         for t in transitions:
             tanh_val = torch.tanh(beta * (x - t))
             grad_estimate = grad_estimate + beta * (1.0 - tanh_val ** 2)
+        # Normalise by number of transitions so peak gradient magnitude ≈ 1
+        # Without this: 7 transitions each contributing up to beta → gradient
+        # is 7x too large → optimizer takes huge steps → network collapses
+        grad_estimate = grad_estimate / len(transitions)
         # Three return values: one per forward argument (x, levels, beta)
         return grad_out * grad_estimate, None, None
 
@@ -71,10 +75,11 @@ class Activation8Level(nn.Module):
         # Default levels — overridden at runtime via levels.copy_() in training script
         levels = torch.linspace(-1.0, 1.0, 8)
         self.register_buffer('levels', levels)
-        # beta starts at 1.0 (smooth) and is annealed upward by the training script
-        # beta=1  → gentle smooth staircase, gradients flow freely
-        # beta=20 → sharp staircase, nearly identical to hard snap
-        self.beta = 1.0
+        # beta controls sharpness of the smooth staircase in the backward pass
+        # No annealing needed — forward is always the fixed hard snap
+        # beta=5.0 is a good fixed value: sharp enough to concentrate gradients
+        # near level boundaries, smooth enough for stable training
+        self.beta = 5.0
 
     def forward(self, x):
         return Act8LevelTanhGrad.apply(x, self.levels, self.beta)
