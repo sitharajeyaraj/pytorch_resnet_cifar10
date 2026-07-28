@@ -9,7 +9,7 @@ Fine-tunes ResNet20 with:
   - Fixed LR (no scheduler)
 
 >>> CHANGE CLIP TO TRY DIFFERENT ACTIVATION LEVELS <<<
-    CLIP = 1.0  →  levels = linspace(-1, +1, 8)
+    CLIP = 1.0  →  levels = linspace(-1, +1, 8)   ← best result so far: 78.58%
     CLIP = 2.0  →  levels = linspace(-2, +2, 8)
     CLIP = 3.0  →  levels = linspace(-3, +3, 8)
     CLIP = 4.0  →  levels = linspace(-4, +4, 8)
@@ -34,7 +34,7 @@ import resnet
 
 # ============================================================
 # >>>  CHANGE THIS VALUE TO TRY DIFFERENT ACTIVATION LEVELS
-CLIP = 3.0
+CLIP = 1.0
 # ============================================================
 
 # ── Config ───────────────────────────────────────────────────
@@ -77,15 +77,12 @@ test_loader = DataLoader(
 # ── Model ─────────────────────────────────────────────────────
 model = resnet.resnet20().to(device)
 
-# Load checkpoint
 ckpt       = torch.load(LOAD_PATH, map_location=device)
 state_dict = ckpt['state_dict'] if 'state_dict' in ckpt else ckpt
 state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
 missing, unexpected = model.load_state_dict(state_dict, strict=False)
 
-# ── Set activation levels using CLIP ─────────────────────────
-# This directly updates the buffer in every activation quantizer
-# so that all 19 quantizers use linspace(-CLIP, +CLIP, 8)
+# Set activation levels from CLIP — updates all 19 quantizers
 new_levels = torch.linspace(-CLIP, CLIP, 8).to(device)
 model.act1.levels.copy_(new_levels)
 for layer in [model.layer1, model.layer2, model.layer3]:
@@ -93,13 +90,13 @@ for layer in [model.layer1, model.layer2, model.layer3]:
         block.act1.levels.copy_(new_levels)
         block.act2.levels.copy_(new_levels)
 
-# ── Print setup ───────────────────────────────────────────────
 print(f"\nLoaded checkpoint  : {LOAD_PATH}")
 print(f"Missing keys       : {missing}")
 print(f"Unexpected keys    : {unexpected}")
 print(f"\nQuantization setup:")
 print(f"  Input      : 8 levels {model.input_quantizer.levels.tolist()}")
 print(f"  Activations: 8 levels {model.act1.levels.tolist()}")
+print(f"  STE clip   : ±{CLIP} (auto from outermost level)")
 print(f"  Weights    : float (not yet quantized)")
 
 # ── Training ──────────────────────────────────────────────────
@@ -114,7 +111,6 @@ print(f"\nStarting fine-tuning for {EPOCHS} epochs ...\n")
 
 for epoch in range(1, EPOCHS + 1):
 
-    # Train
     model.train()
     correct = total = 0
     for images, labels in train_loader:
@@ -128,7 +124,6 @@ for epoch in range(1, EPOCHS + 1):
         total   += labels.size(0)
     train_acc = 100.0 * correct / total
 
-    # Evaluate
     model.eval()
     correct = total = 0
     with torch.no_grad():
@@ -171,7 +166,6 @@ fig.savefig(PLOT_PATH, dpi=120, bbox_inches='tight')
 plt.close(fig)
 print(f"\nPlot saved : {PLOT_PATH}")
 
-# ── Summary ───────────────────────────────────────────────────
 print(f"\n{'='*50}")
 print(f"RESULT SUMMARY")
 print(f"{'='*50}")
