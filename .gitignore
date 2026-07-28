@@ -1,0 +1,18 @@
+cat > .gitignore << 'EOF'
+# Checkpoints
+*.pth
+*.th
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Plots
+*.png
+
+# Data
+data/
+activation_sweep/
+EOF
+git add .gitignore
+git commit -m "Add .gitignore"

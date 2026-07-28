@@ -54,7 +54,7 @@ class Act8LevelSTE(torch.autograd.Function):
 class Activation8Level(nn.Module):
     def __init__(self):
         super(Activation8Level, self).__init__()
-        levels = torch.linspace(-2.0, 2.0, 8)
+        levels = torch.linspace(-1.0, 1.0, 8)
         self.register_buffer('levels', levels)
 
     def forward(self, x):
