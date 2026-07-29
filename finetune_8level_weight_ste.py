@@ -7,7 +7,11 @@ Starting checkpoint : 8level_act_clip1_best.pth  (86.01% — activations already
 Branch              : 8level-weight-ste
 
 Weight quantization is switched ON from epoch 1.
-No LR scheduler — fixed LR throughout.
+LR starts at 1e-3, halved every 25 epochs (step decay).
+  Epoch  1-25 : LR = 1e-3
+  Epoch 26-50 : LR = 5e-4
+  Epoch 51-75 : LR = 2.5e-4
+  Epoch 76-100: LR = 1.25e-4
 """
 
 import os
@@ -29,7 +33,9 @@ CHECKPOINT  = '8level_act_clip1_best.pth'   # starting point (86.01%)
 SAVE_PATH   = '8level_weight_ste_best.pth'
 W_CLIP      = 1.0    # outermost weight level (linspace -1 to +1)
 EPOCHS      = 100
-LR          = 5e-3
+LR          = 1e-3   # starting LR — halved every 25 epochs
+LR_STEP     = 25     # halve LR every this many epochs
+LR_GAMMA    = 0.5    # multiply LR by this at each step
 BATCH_SIZE  = 128
 NUM_WORKERS = 4
 # ============================================================
@@ -98,17 +104,22 @@ def save_plot(train_accs, val_accs, train_losses, val_losses):
 
     ax1.plot(epochs, train_accs, label='Train accuracy')
     ax1.plot(epochs, val_accs,   label='Val accuracy')
+    # mark LR drop points
+    for step in [25, 50, 75]:
+        ax1.axvline(x=step, color='red', linestyle='--', alpha=0.5)
     ax1.set_xlabel('Epoch')
     ax1.set_ylabel('Accuracy (%)')
-    ax1.set_title('Accuracy')
+    ax1.set_title('Accuracy (red lines = LR halved)')
     ax1.legend()
     ax1.grid(True)
 
     ax2.plot(epochs, train_losses, label='Train loss')
     ax2.plot(epochs, val_losses,   label='Val loss')
+    for step in [25, 50, 75]:
+        ax2.axvline(x=step, color='red', linestyle='--', alpha=0.5)
     ax2.set_xlabel('Epoch')
     ax2.set_ylabel('Loss')
-    ax2.set_title('Loss')
+    ax2.set_title('Loss (red lines = LR halved)')
     ax2.legend()
     ax2.grid(True)
 
@@ -142,15 +153,21 @@ def main():
     optimizer = optim.SGD(model.parameters(), lr=LR,
                           momentum=0.9, weight_decay=1e-4)
 
+    # Halve LR every 25 epochs
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=LR_STEP, gamma=LR_GAMMA)
+
     train_accs, val_accs = [], []
     train_losses, val_losses = [], []
     best_acc = 0.0
 
-    print(f'\n--- Weight quant ON from epoch 1 ({EPOCHS} epochs, LR={LR}) ---')
+    print(f'\n--- Weight quant ON from epoch 1 ({EPOCHS} epochs) ---')
+    print(f'LR schedule: {LR} → {LR*0.5} → {LR*0.25} → {LR*0.125} (halved every {LR_STEP} epochs)\n')
 
     for epoch in range(1, EPOCHS + 1):
+        current_lr = optimizer.param_groups[0]['lr']
         tr_loss, tr_acc = train_one_epoch(model, train_loader, optimizer, criterion, device)
         vl_loss, vl_acc = evaluate(model, test_loader, criterion, device)
+        scheduler.step()
 
         train_accs.append(tr_acc)
         val_accs.append(vl_acc)
@@ -161,7 +178,7 @@ def main():
             best_acc = vl_acc
             torch.save(model.state_dict(), SAVE_PATH)
 
-        print(f'Epoch {epoch:3d}/{EPOCHS} | '
+        print(f'Epoch {epoch:3d}/{EPOCHS} | LR {current_lr:.2e} | '
               f'train {tr_acc:.2f}% loss {tr_loss:.4f} | '
               f'val {vl_acc:.2f}% loss {vl_loss:.4f} | '
               f'best {best_acc:.2f}%')
