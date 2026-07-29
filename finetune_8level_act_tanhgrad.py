@@ -45,7 +45,7 @@ BETA = 5.0    # fixed — sharp enough to focus gradients near boundaries,
 # ============================================================
 
 # ── Paths ────────────────────────────────────────────────────
-LOAD_PATH = './8level_act_clip1_best.pth'       # best checkpoint from STE run
+LOAD_PATH = './8level_input_best.pth'       # best checkpoint from STE run
 SAVE_PATH = './8level_act_tanhgrad_best.pth'
 PLOT_PATH = './8level_act_tanhgrad_plot.png'
 
