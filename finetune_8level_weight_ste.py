@@ -124,9 +124,9 @@ def save_plot(train_accs, val_accs, train_losses, val_losses):
     ax2.grid(True)
 
     plt.tight_layout()
-    plt.savefig('8level_weight_ste_accuracy.png')
+    plt.savefig('8level_weight_ste_lr1e3_stepdecay_plot.png')
     plt.close()
-    print('Plot saved to 8level_weight_ste_accuracy.png')
+    print('Plot saved to 8level_weight_ste_lr1e3_stepdecay_plot.png')
 
 
 def main():
