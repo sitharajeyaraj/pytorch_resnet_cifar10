@@ -29,7 +29,7 @@ CHECKPOINT  = '8level_act_clip1_best.pth'   # starting point (86.01%)
 SAVE_PATH   = '8level_weight_ste_best.pth'
 W_CLIP      = 1.0    # outermost weight level (linspace -1 to +1)
 EPOCHS      = 100
-LR          = 1e-3
+LR          = 5e-3
 BATCH_SIZE  = 128
 NUM_WORKERS = 4
 # ============================================================
