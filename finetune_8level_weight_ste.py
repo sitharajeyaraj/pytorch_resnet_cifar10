@@ -91,16 +91,27 @@ def evaluate(model, loader, criterion, device):
     return total_loss / total, 100.0 * correct / total
 
 
-def save_plot(train_accs, val_accs):
+def save_plot(train_accs, val_accs, train_losses, val_losses):
     epochs = list(range(1, len(train_accs) + 1))
-    plt.figure(figsize=(10, 5))
-    plt.plot(epochs, train_accs, label='Train accuracy')
-    plt.plot(epochs, val_accs,   label='Val accuracy')
-    plt.xlabel('Epoch')
-    plt.ylabel('Accuracy (%)')
-    plt.title('8-level weight STE — weight quant ON from epoch 1')
-    plt.legend()
-    plt.grid(True)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+    ax1.plot(epochs, train_accs, label='Train accuracy')
+    ax1.plot(epochs, val_accs,   label='Val accuracy')
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Accuracy (%)')
+    ax1.set_title('Accuracy')
+    ax1.legend()
+    ax1.grid(True)
+
+    ax2.plot(epochs, train_losses, label='Train loss')
+    ax2.plot(epochs, val_losses,   label='Val loss')
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Loss')
+    ax2.set_title('Loss')
+    ax2.legend()
+    ax2.grid(True)
+
     plt.tight_layout()
     plt.savefig('8level_weight_ste_accuracy.png')
     plt.close()
@@ -116,9 +127,9 @@ def main():
     # Build model and load activation-quantized checkpoint
     model = resnet20().to(device)
     assert os.path.exists(CHECKPOINT), f'Checkpoint not found: {CHECKPOINT}'
-    state = torch.load(CHECKPOINT, map_location=device)
-    model.load_state_dict(state)
-    print(f'Loaded checkpoint: {CHECKPOINT}')
+    ckpt = torch.load(CHECKPOINT, map_location=device)
+    model.load_state_dict(ckpt['state_dict'], strict=False)
+    print(f'Checkpoint epoch {ckpt["epoch"]}, acc {ckpt["acc"]:.2f}%')
 
     criterion = nn.CrossEntropyLoss()
 
@@ -132,6 +143,7 @@ def main():
                           momentum=0.9, weight_decay=1e-4)
 
     train_accs, val_accs = [], []
+    train_losses, val_losses = [], []
     best_acc = 0.0
 
     print(f'\n--- Weight quant ON from epoch 1 ({EPOCHS} epochs, LR={LR}) ---')
@@ -142,17 +154,21 @@ def main():
 
         train_accs.append(tr_acc)
         val_accs.append(vl_acc)
+        train_losses.append(tr_loss)
+        val_losses.append(vl_loss)
 
         if vl_acc > best_acc:
             best_acc = vl_acc
             torch.save(model.state_dict(), SAVE_PATH)
 
         print(f'Epoch {epoch:3d}/{EPOCHS} | '
-              f'train {tr_acc:.2f}% | val {vl_acc:.2f}% | best {best_acc:.2f}%')
+              f'train {tr_acc:.2f}% loss {tr_loss:.4f} | '
+              f'val {vl_acc:.2f}% loss {vl_loss:.4f} | '
+              f'best {best_acc:.2f}%')
 
     print(f'\nBest val accuracy: {best_acc:.2f}%')
     print(f'Model saved to: {SAVE_PATH}')
-    save_plot(train_accs, val_accs)
+    save_plot(train_accs, val_accs, train_losses, val_losses)
 
 
 if __name__ == '__main__':
