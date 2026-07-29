@@ -6,15 +6,11 @@ Stage 6: Weight quantization with STE on top of the 8-level activation baseline.
 Starting checkpoint : 8level_act_clip1_best.pth  (86.01% — activations already quantized)
 Branch              : 8level-weight-ste
 
-Two-phase training:
-  Phase 1 (epochs 1–30) : weights stay float, activations quantized
-                           let the network re-stabilise after loading
-  Phase 2 (epochs 31–100): weight quantization switched ON via set_weight_quantization(True)
-                           fine-tune discrete weight states at low LR
+Weight quantization is switched ON from epoch 1.
+No LR scheduler — fixed LR throughout.
 """
 
 import os
-import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -29,19 +25,13 @@ from resnet import resnet20
 # ============================================================
 # TOP-LEVEL VARIABLES — change only here
 # ============================================================
-CHECKPOINT      = '8level_act_clip1_best.pth'   # starting point (86.01%)
-SAVE_PATH       = '8level_weight_ste_best.pth'
-W_CLIP          = 1.0       # outermost weight level (linspace -1 to +1)
-
-PHASE1_EPOCHS   = 30        # float weights, quantized activations
-PHASE2_EPOCHS   = 70        # quantized weights + activations
-TOTAL_EPOCHS    = PHASE1_EPOCHS + PHASE2_EPOCHS   # 100
-
-LR_PHASE1       = 1e-3
-LR_PHASE2       = 1e-4
-
-BATCH_SIZE      = 128
-NUM_WORKERS     = 4
+CHECKPOINT  = '8level_act_clip1_best.pth'   # starting point (86.01%)
+SAVE_PATH   = '8level_weight_ste_best.pth'
+W_CLIP      = 1.0    # outermost weight level (linspace -1 to +1)
+EPOCHS      = 100
+LR          = 1e-3
+BATCH_SIZE  = 128
+NUM_WORKERS = 4
 # ============================================================
 
 
@@ -101,15 +91,14 @@ def evaluate(model, loader, criterion, device):
     return total_loss / total, 100.0 * correct / total
 
 
-def save_plot(train_accs, val_accs, phase1_end):
+def save_plot(train_accs, val_accs):
     epochs = list(range(1, len(train_accs) + 1))
     plt.figure(figsize=(10, 5))
     plt.plot(epochs, train_accs, label='Train accuracy')
     plt.plot(epochs, val_accs,   label='Val accuracy')
-    plt.axvline(x=phase1_end, color='red', linestyle='--', label='Weight quant ON')
     plt.xlabel('Epoch')
     plt.ylabel('Accuracy (%)')
-    plt.title('8-level weight STE fine-tune')
+    plt.title('8-level weight STE — weight quant ON from epoch 1')
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
@@ -133,26 +122,23 @@ def main():
 
     criterion = nn.CrossEntropyLoss()
 
-    # ---- Evaluate starting accuracy ----
+    # Evaluate starting accuracy before any training
     _, start_acc = evaluate(model, test_loader, criterion, device)
     print(f'Starting val accuracy: {start_acc:.2f}%')
+
+    # Switch weight quantization ON from epoch 1
+    model.set_weight_quantization(True)
+    optimizer = optim.SGD(model.parameters(), lr=LR,
+                          momentum=0.9, weight_decay=1e-4)
 
     train_accs, val_accs = [], []
     best_acc = 0.0
 
-    # ===========================================================
-    # PHASE 1 — float weights, quantized activations
-    # ===========================================================
-    print(f'\n--- Phase 1: float weights ({PHASE1_EPOCHS} epochs, LR={LR_PHASE1}) ---')
-    model.set_weight_quantization(False)
-    optimizer = optim.SGD(model.parameters(), lr=LR_PHASE1,
-                          momentum=0.9, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=PHASE1_EPOCHS)
+    print(f'\n--- Weight quant ON from epoch 1 ({EPOCHS} epochs, LR={LR}) ---')
 
-    for epoch in range(1, PHASE1_EPOCHS + 1):
+    for epoch in range(1, EPOCHS + 1):
         tr_loss, tr_acc = train_one_epoch(model, train_loader, optimizer, criterion, device)
         vl_loss, vl_acc = evaluate(model, test_loader, criterion, device)
-        scheduler.step()
 
         train_accs.append(tr_acc)
         val_accs.append(vl_acc)
@@ -161,36 +147,12 @@ def main():
             best_acc = vl_acc
             torch.save(model.state_dict(), SAVE_PATH)
 
-        print(f'[P1] Epoch {epoch:3d}/{PHASE1_EPOCHS} | '
-              f'train {tr_acc:.2f}% | val {vl_acc:.2f}% | best {best_acc:.2f}%')
-
-    # ===========================================================
-    # PHASE 2 — weight quantization ON
-    # ===========================================================
-    print(f'\n--- Phase 2: weight quantization ON ({PHASE2_EPOCHS} epochs, LR={LR_PHASE2}) ---')
-    model.set_weight_quantization(True)
-    optimizer = optim.SGD(model.parameters(), lr=LR_PHASE2,
-                          momentum=0.9, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=PHASE2_EPOCHS)
-
-    for epoch in range(1, PHASE2_EPOCHS + 1):
-        tr_loss, tr_acc = train_one_epoch(model, train_loader, optimizer, criterion, device)
-        vl_loss, vl_acc = evaluate(model, test_loader, criterion, device)
-        scheduler.step()
-
-        train_accs.append(tr_acc)
-        val_accs.append(vl_acc)
-
-        if vl_acc > best_acc:
-            best_acc = vl_acc
-            torch.save(model.state_dict(), SAVE_PATH)
-
-        print(f'[P2] Epoch {epoch:3d}/{PHASE2_EPOCHS} | '
+        print(f'Epoch {epoch:3d}/{EPOCHS} | '
               f'train {tr_acc:.2f}% | val {vl_acc:.2f}% | best {best_acc:.2f}%')
 
     print(f'\nBest val accuracy: {best_acc:.2f}%')
     print(f'Model saved to: {SAVE_PATH}')
-    save_plot(train_accs, val_accs, PHASE1_EPOCHS)
+    save_plot(train_accs, val_accs)
 
 
 if __name__ == '__main__':
