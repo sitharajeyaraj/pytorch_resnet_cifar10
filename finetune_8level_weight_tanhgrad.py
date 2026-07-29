@@ -6,7 +6,7 @@ Fine-tunes ResNet20 with:
   - 8-level input quantization
   - 8-level activation quantization (stacked tanh gradient)
   - 8-level weight quantization    (stacked tanh gradient)
-  - LR starts at 1e-3, halved every 25 epochs (step decay)
+  - Fixed LR 1e-3 (no scheduler)
   - Fixed beta for both activations and weights (no annealing)
 
 Loading from:
@@ -38,15 +38,13 @@ W_CLIP     = 1.0    # weight levels:     linspace(-1, +1, 8)
 ACT_BETA   = 5.0    # sharpness for activation backward
 W_BETA     = 5.0    # sharpness for weight backward
 EPOCHS     = 100
-LR         = 1e-3   # starting LR — halved every 25 epochs
-LR_STEP    = 25     # halve LR every this many epochs
-LR_GAMMA   = 0.5    # multiply LR by this at each step
+LR         = 1e-3   # fixed LR throughout
 BATCH_SIZE = 128
 WORKERS    = 2
 
 LOAD_PATH  = './8level_act_tanhgrad_best.pth'
 SAVE_PATH  = './8level_weight_tanhgrad_best.pth'
-PLOT_PATH  = './8level_weight_tanhgrad_lr1e3_stepdecay_plot.png'
+PLOT_PATH  = './8level_weight_tanhgrad_lr1e3_constant_plot.png'
 # ============================================================
 
 MEAN = (0.4914, 0.4822, 0.4465)
@@ -56,11 +54,7 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Device      : {device}")
 print(f"Act clip    : [-{ACT_CLIP}, +{ACT_CLIP}]")
 print(f"Weight clip : [-{W_CLIP}, +{W_CLIP}]")
-print(f"LR schedule : {LR} halved every {LR_STEP} epochs")
-print(f"  Epoch  1-25 : LR = {LR}")
-print(f"  Epoch 26-50 : LR = {LR*0.5}")
-print(f"  Epoch 51-75 : LR = {LR*0.25}")
-print(f"  Epoch 76-100: LR = {LR*0.125}")
+print(f"LR          : {LR} (fixed, no scheduler)")
 print(f"ACT_BETA    : {ACT_BETA} (fixed)")
 print(f"W_BETA      : {W_BETA} (fixed)")
 
@@ -119,7 +113,6 @@ print(f"  Weight quantization : ON")
 # ── Training ───────────────────────────────────────────────────
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(model.parameters(), lr=LR, momentum=0.9, weight_decay=1e-4)
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=LR_STEP, gamma=LR_GAMMA)
 
 train_accs   = []
 val_accs     = []
@@ -130,8 +123,6 @@ best_acc     = 0.0
 print(f"\nStarting fine-tuning for {EPOCHS} epochs ...\n")
 
 for epoch in range(1, EPOCHS + 1):
-
-    current_lr = optimizer.param_groups[0]['lr']
 
     # ── Train ──
     model.train()
@@ -165,8 +156,6 @@ for epoch in range(1, EPOCHS + 1):
     val_acc  = 100.0 * correct / total
     val_loss = total_loss / total
 
-    scheduler.step()
-
     train_accs.append(train_acc)
     val_accs.append(val_acc)
     train_losses.append(train_loss)
@@ -182,29 +171,26 @@ for epoch in range(1, EPOCHS + 1):
                     'act_beta': ACT_BETA,
                     'w_beta': W_BETA}, SAVE_PATH)
 
-    print(f"Epoch {epoch:3d}/{EPOCHS} | LR {current_lr:.2e} | "
+    print(f"Epoch {epoch:3d}/{EPOCHS} | LR {LR:.2e} | "
           f"Train {train_acc:.2f}% loss {train_loss:.4f} | "
           f"Val {val_acc:.2f}% loss {val_loss:.4f} | "
           f"Best {best_acc:.2f}%")
 
 # ── Plot ───────────────────────────────────────────────────────
 epochs_range = range(1, EPOCHS + 1)
-lr_drops = [25, 50, 75]
 
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
 # Accuracy plot
 ax1.plot(epochs_range, train_accs, label='Train accuracy', color='steelblue', linewidth=1.5)
 ax1.plot(epochs_range, val_accs,   label='Val accuracy',   color='tomato',    linewidth=1.5)
-for step in lr_drops:
-    ax1.axvline(x=step, color='red', linestyle='--', alpha=0.4, linewidth=1)
 ax1.axhline(y=85.65, color='orange', linestyle='--', linewidth=1, label='Act TanhGrad, float weights (85.65%)')
 ax1.axhline(y=86.01, color='brown',  linestyle='--', linewidth=1, label='Act STE, float weights (86.01%)')
 ax1.axhline(y=89.02, color='green',  linestyle='--', linewidth=1, label='Input only (89.02%)')
 ax1.axhline(y=91.47, color='purple', linestyle='--', linewidth=1, label='Float baseline (91.47%)')
 ax1.set_xlabel('Epoch')
 ax1.set_ylabel('Accuracy (%)')
-ax1.set_title(f'Accuracy | W_BETA={W_BETA} | Best: {best_acc:.2f}% (red = LR halved)')
+ax1.set_title(f'Accuracy | LR={LR} (fixed) | W_BETA={W_BETA} | Best: {best_acc:.2f}%')
 ax1.legend(fontsize=7)
 ax1.set_ylim(0, 100)
 ax1.grid(True, alpha=0.3)
@@ -212,11 +198,9 @@ ax1.grid(True, alpha=0.3)
 # Loss plot
 ax2.plot(epochs_range, train_losses, label='Train loss', color='steelblue', linewidth=1.5)
 ax2.plot(epochs_range, val_losses,   label='Val loss',   color='tomato',    linewidth=1.5)
-for step in lr_drops:
-    ax2.axvline(x=step, color='red', linestyle='--', alpha=0.4, linewidth=1)
 ax2.set_xlabel('Epoch')
 ax2.set_ylabel('Loss')
-ax2.set_title('Loss (red lines = LR halved)')
+ax2.set_title(f'Loss | LR={LR} (fixed)')
 ax2.legend(fontsize=8)
 ax2.grid(True, alpha=0.3)
 
