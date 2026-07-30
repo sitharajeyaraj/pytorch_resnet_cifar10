@@ -52,7 +52,7 @@ ACT_BETA    = 5.0         # ignored if ACT_GRAD='ste'
 W_BETA      = 5.0         # ignored if WEIGHT_GRAD='ste'
 
 # --- Training schedule -----------------------------------------
-EPOCHS           = 1
+EPOCHS           = 100
 LR               = 1e-3
 
 USE_SCHEDULER    = False
