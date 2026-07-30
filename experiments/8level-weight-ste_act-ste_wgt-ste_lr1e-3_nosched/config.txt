@@ -1,0 +1,25 @@
+RUN_NAME         = 8level-weight-ste_act-ste_wgt-ste_lr1e-3_nosched
+EXPERIMENT       = 8level-weight-ste
+CHECKPOINT       = 8level_act_clip1_best.pth
+
+QUANTIZE_INPUT   = True
+QUANTIZE_ACT     = True
+QUANTIZE_WEIGHTS = True
+
+ACT_GRAD         = ste
+WEIGHT_GRAD      = ste
+ACT_CLIP         = 1.0
+W_CLIP           = 1.0
+ACT_BETA         = 5.0
+W_BETA           = 5.0
+
+EPOCHS           = 100
+LR               = 0.001
+USE_SCHEDULER    = False
+STEP_SIZE        = 25
+SCHEDULER_GAMMA  = 0.5
+
+BATCH_SIZE       = 128
+MOMENTUM         = 0.9
+WEIGHT_DECAY     = 0.0001
+GPU_ID           = 0
