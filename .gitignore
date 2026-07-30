@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+
+# Data
+data/
+
+# Loose checkpoint and plot files in root
+*.pth
+*.png
+
+# Experiments folder — commit selectively
+# experiments/
+
+# Misc
+save_temp/
+activation_sweep/
+*.th
