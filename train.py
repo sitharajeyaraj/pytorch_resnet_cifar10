@@ -8,14 +8,23 @@
 #   3. To pick a specific GPU:
 #        GPU_ID=1 python train.py
 #
+# NOISE EXPERIMENT:
+#   Set NOISE_VARIANCE > 0 to add Gaussian noise N(0, variance)
+#   to quantized activations during training only.
+#   NOISE_PHASE_EPOCHS controls how many epochs noise is active.
+#   After NOISE_PHASE_EPOCHS, noise is switched off automatically.
+#   Set NOISE_PHASE_EPOCHS = EPOCHS to keep noise for all epochs.
+#
 # OUTPUTS (auto-saved to experiments/<run_name>/):
-#   config.txt          — exact settings used for this run
-#   log.txt             — epoch-by-epoch train/val accuracy and loss
+#   config.txt          — exact settings used
+#   log.txt             — epoch-by-epoch results
 #   best_model.pth      — best checkpoint
+#   last_model.pth      — checkpoint after final epoch
 #   training_curves.png — accuracy + loss plot
 # ==============================================================
 
 import os
+import math
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -31,65 +40,74 @@ import resnet
 # CONFIG — change only this block for each experiment
 # ==============================================================
 
-EXPERIMENT       = '8level-weight-ste'
+EXPERIMENT       = '8level-weight-ste-noise-var0075'
 
-# --- Checkpoint paths ------------------------------------------
-CHECKPOINT       = '8level_act_clip1_best.pth'   # where to START from
+# --- Checkpoint -------------------------------------------
+CHECKPOINT       = 'experiments/8level-weight-ste_act-ste_wgt-ste_lr1e-3_nosched/best_model.pth'
 
-# --- What to quantize ------------------------------------------
+# --- What to quantize -------------------------------------
 QUANTIZE_INPUT   = True
 QUANTIZE_ACT     = True
 QUANTIZE_WEIGHTS = True
 
-# --- Which backward estimator ----------------------------------
-ACT_GRAD    = 'ste'       # 'ste' or 'tanhgrad'
-WEIGHT_GRAD = 'ste'       # 'ste' or 'tanhgrad'
+# --- Which backward estimator -----------------------------
+ACT_GRAD    = 'ste'
+WEIGHT_GRAD = 'ste'
 
-# --- Quantization levels ---------------------------------------
+# --- Quantization levels ----------------------------------
 ACT_CLIP    = 1.0
 W_CLIP      = 1.0
-ACT_BETA    = 5.0         # ignored if ACT_GRAD='ste'
-W_BETA      = 5.0         # ignored if WEIGHT_GRAD='ste'
+ACT_BETA    = 5.0
+W_BETA      = 5.0
 
-# --- Training schedule -----------------------------------------
-EPOCHS           = 100
+# --- Noise settings ---------------------------------------
+# Noise N(0, NOISE_VARIANCE) added to quantized activations
+# during training only. Val always uses clean levels.
+NOISE_VARIANCE   = 0.075             # variance — std = sqrt(0.075) ≈ 0.274
+NOISE_PHASE_EPOCHS = 130           # noise ON for first N epochs
+#                                   # set equal to EPOCHS for all-epoch noise
+
+# --- Training schedule ------------------------------------
+EPOCHS           = 150
 LR               = 1e-3
 
 USE_SCHEDULER    = False
-STEP_SIZE        = 25     # halve LR every this many epochs
+STEP_SIZE        = 25
 SCHEDULER_GAMMA  = 0.5
 
-# --- Other hyperparameters ------------------------------------
+# --- Other hyperparameters --------------------------------
 BATCH_SIZE   = 128
 MOMENTUM     = 0.9
 WEIGHT_DECAY = 1e-4
 NUM_WORKERS  = 4
 
-# --- GPU selection --------------------------------------------
+# --- GPU selection ----------------------------------------
 GPU_ID = int(os.environ.get('GPU_ID', 0))
 
 # ==============================================================
 # END CONFIG
 # ==============================================================
 
+# Compute std from variance
+NOISE_STD = math.sqrt(NOISE_VARIANCE)
 
-# ------ Build run name and output folder ----------------------
+# ------ Build run name and output folder ------------------
 sched_tag = f'step{STEP_SIZE}' if USE_SCHEDULER else 'nosched'
 lr_tag    = f'lr{LR:.0e}'.replace('e-0', 'e-').replace('e+0', 'e')
 act_tag   = f'act-{ACT_GRAD}'
 wgt_tag   = f'wgt-{WEIGHT_GRAD}' if QUANTIZE_WEIGHTS else 'wgt-float'
+noise_tag = f'noise{NOISE_VARIANCE}-{NOISE_PHASE_EPOCHS}ep' if NOISE_VARIANCE > 0 else 'nonoise'
 
-RUN_NAME   = f'{EXPERIMENT}_{act_tag}_{wgt_tag}_{lr_tag}_{sched_tag}'
+RUN_NAME   = f'{EXPERIMENT}_{act_tag}_{wgt_tag}_{lr_tag}_{sched_tag}_{noise_tag}'
 OUTPUT_DIR = os.path.join('experiments', RUN_NAME)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-LOG_FILE   = os.path.join(OUTPUT_DIR, 'log.txt')
-SAVE_PATH  = os.path.join(OUTPUT_DIR, 'best_model.pth')
-PLOT_FILE  = os.path.join(OUTPUT_DIR, 'training_curves.png')
-CFG_FILE   = os.path.join(OUTPUT_DIR, 'config.txt')
+LOG_FILE  = os.path.join(OUTPUT_DIR, 'log.txt')
+SAVE_PATH = os.path.join(OUTPUT_DIR, 'best_model.pth')
+PLOT_FILE = os.path.join(OUTPUT_DIR, 'training_curves.png')
+CFG_FILE  = os.path.join(OUTPUT_DIR, 'config.txt')
 
-
-# ------ Helper: write to both terminal and log file -----------
+# ------ Helper: write to terminal and log -----------------
 log_fh = open(LOG_FILE, 'w')
 
 def log(msg):
@@ -97,44 +115,46 @@ def log(msg):
     log_fh.write(msg + '\n')
     log_fh.flush()
 
-
-# ------ Save config -------------------------------------------
+# ------ Save config ---------------------------------------
 def save_config():
     lines = [
-        f'RUN_NAME         = {RUN_NAME}',
-        f'EXPERIMENT       = {EXPERIMENT}',
-        f'CHECKPOINT       = {CHECKPOINT}',
+        f'RUN_NAME           = {RUN_NAME}',
+        f'EXPERIMENT         = {EXPERIMENT}',
+        f'CHECKPOINT         = {CHECKPOINT}',
         f'',
-        f'QUANTIZE_INPUT   = {QUANTIZE_INPUT}',
-        f'QUANTIZE_ACT     = {QUANTIZE_ACT}',
-        f'QUANTIZE_WEIGHTS = {QUANTIZE_WEIGHTS}',
+        f'QUANTIZE_INPUT     = {QUANTIZE_INPUT}',
+        f'QUANTIZE_ACT       = {QUANTIZE_ACT}',
+        f'QUANTIZE_WEIGHTS   = {QUANTIZE_WEIGHTS}',
         f'',
-        f'ACT_GRAD         = {ACT_GRAD}',
-        f'WEIGHT_GRAD      = {WEIGHT_GRAD}',
-        f'ACT_CLIP         = {ACT_CLIP}',
-        f'W_CLIP           = {W_CLIP}',
-        f'ACT_BETA         = {ACT_BETA}',
-        f'W_BETA           = {W_BETA}',
+        f'ACT_GRAD           = {ACT_GRAD}',
+        f'WEIGHT_GRAD        = {WEIGHT_GRAD}',
+        f'ACT_CLIP           = {ACT_CLIP}',
+        f'W_CLIP             = {W_CLIP}',
+        f'ACT_BETA           = {ACT_BETA}',
+        f'W_BETA             = {W_BETA}',
         f'',
-        f'EPOCHS           = {EPOCHS}',
-        f'LR               = {LR}',
-        f'USE_SCHEDULER    = {USE_SCHEDULER}',
-        f'STEP_SIZE        = {STEP_SIZE}',
-        f'SCHEDULER_GAMMA  = {SCHEDULER_GAMMA}',
+        f'NOISE_VARIANCE     = {NOISE_VARIANCE}',
+        f'NOISE_STD          = {NOISE_STD:.4f}',
+        f'NOISE_PHASE_EPOCHS = {NOISE_PHASE_EPOCHS}',
         f'',
-        f'BATCH_SIZE       = {BATCH_SIZE}',
-        f'MOMENTUM         = {MOMENTUM}',
-        f'WEIGHT_DECAY     = {WEIGHT_DECAY}',
-        f'GPU_ID           = {GPU_ID}',
+        f'EPOCHS             = {EPOCHS}',
+        f'LR                 = {LR}',
+        f'USE_SCHEDULER      = {USE_SCHEDULER}',
+        f'STEP_SIZE          = {STEP_SIZE}',
+        f'SCHEDULER_GAMMA    = {SCHEDULER_GAMMA}',
+        f'',
+        f'BATCH_SIZE         = {BATCH_SIZE}',
+        f'MOMENTUM           = {MOMENTUM}',
+        f'WEIGHT_DECAY       = {WEIGHT_DECAY}',
+        f'GPU_ID             = {GPU_ID}',
     ]
     with open(CFG_FILE, 'w') as f:
         f.write('\n'.join(lines))
 
-
-# ------ Device setup ------------------------------------------
+# ------ Device setup --------------------------------------
 device = torch.device(f'cuda:{GPU_ID}' if torch.cuda.is_available() else 'cpu')
 
-# ------ Data loaders ------------------------------------------
+# ------ Data loaders --------------------------------------
 mean = (0.4914, 0.4822, 0.4465)
 std  = (0.2023, 0.1994, 0.2010)
 
@@ -159,7 +179,7 @@ train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE,
 test_loader  = DataLoader(test_dataset,  batch_size=256,
                           shuffle=False, num_workers=NUM_WORKERS, pin_memory=True)
 
-# ------ Build model -------------------------------------------
+# ------ Build model ---------------------------------------
 model = resnet.resnet20(
     quantize_input   = QUANTIZE_INPUT,
     quantize_act     = QUANTIZE_ACT,
@@ -170,9 +190,10 @@ model = resnet.resnet20(
     w_clip           = W_CLIP,
     act_beta         = ACT_BETA,
     w_beta           = W_BETA,
+    noise_std        = NOISE_STD,
 ).to(device)
 
-# ------ Load checkpoint ---------------------------------------
+# ------ Load checkpoint -----------------------------------
 if CHECKPOINT and os.path.isfile(CHECKPOINT):
     ckpt       = torch.load(CHECKPOINT, map_location=device)
     state_dict = ckpt['state_dict'] if 'state_dict' in ckpt else ckpt
@@ -180,7 +201,7 @@ if CHECKPOINT and os.path.isfile(CHECKPOINT):
 else:
     missing = unexpected = []
 
-# ------ Optimizer and scheduler --------------------------------
+# ------ Optimizer and scheduler ---------------------------
 optimizer = optim.SGD(model.parameters(),
                       lr=LR, momentum=MOMENTUM, weight_decay=WEIGHT_DECAY)
 if USE_SCHEDULER:
@@ -193,29 +214,29 @@ else:
 criterion = nn.CrossEntropyLoss()
 cudnn.benchmark = True
 
-# ------ Print and log header ----------------------------------
+# ------ Print and log header ------------------------------
 save_config()
 
 header_lines = [
-    '=' * 60,
+    '=' * 65,
     f'RUN    : {RUN_NAME}',
     f'OUTPUT : {OUTPUT_DIR}',
     f'Device : {device}',
     f'Start  : {CHECKPOINT}',
     f'Quant  : input={QUANTIZE_INPUT}  act={QUANTIZE_ACT}  weights={QUANTIZE_WEIGHTS}',
     f'Grad   : act={ACT_GRAD}  weight={WEIGHT_GRAD}',
-    f'Clip   : act={ACT_CLIP}  weight={W_CLIP}',
+    f'Noise  : variance={NOISE_VARIANCE}  std={NOISE_STD:.4f}  phase={NOISE_PHASE_EPOCHS} epochs',
     f'LR={LR}  Epochs={EPOCHS}  Scheduler={USE_SCHEDULER}',
     f'Missing keys (new layers): {len(missing)}',
-    f'=' * 60,
-    f'{"Epoch":>6}  {"TrainAcc":>9}  {"TrainLoss":>10}  {"ValAcc":>8}  {"ValLoss":>8}  {"LR":>9}',
-    f'{"-"*60}',
+    '=' * 65,
+    f'{"Epoch":>6}  {"Phase":>8}  {"TrainAcc":>9}  {"TrainLoss":>10}  '
+    f'{"ValAcc":>8}  {"ValLoss":>8}  {"LR":>9}',
+    '-' * 65,
 ]
 for line in header_lines:
     log(line)
 
-
-# ------ Training and evaluation functions ---------------------
+# ------ Training and evaluation ---------------------------
 def train_one_epoch():
     model.train()
     correct = total = 0
@@ -235,7 +256,7 @@ def train_one_epoch():
 
 
 def evaluate():
-    model.eval()
+    model.eval()   # model.eval() ensures noise is NOT added during validation
     correct = total = 0
     running_loss = 0.0
     with torch.no_grad():
@@ -250,19 +271,34 @@ def evaluate():
     return 100. * correct / total, running_loss / total
 
 
-# ------ Reference lines for plot ------------------------------
+# ------ Reference lines for plot --------------------------
 REFERENCE_LINES = {
     'Float baseline'            : 91.47,
     '+ 8-level input'           : 89.02,
     '+ Acts STE, float weights' : 86.01,
+    '+ Acts+Wgt STE (82.67%)'  : 82.67,
 }
 
-# ------ Training loop -----------------------------------------
+# ------ Training loop -------------------------------------
 train_accs, train_losses = [], []
 val_accs,   val_losses   = [], []
-best_val = 0.0
+best_val  = 0.0
 
 for epoch in range(1, EPOCHS + 1):
+
+    # --- Noise phase control ---
+    # Epochs 1 to NOISE_PHASE_EPOCHS : noise ON
+    # Epochs NOISE_PHASE_EPOCHS+1 to EPOCHS : noise OFF
+    if NOISE_VARIANCE > 0:
+        if epoch <= NOISE_PHASE_EPOCHS:
+            model.set_noise(True)
+            phase = 'NOISY'
+        else:
+            model.set_noise(False)
+            phase = 'CLEAN'
+    else:
+        phase = 'CLEAN'
+
     train_acc, train_loss = train_one_epoch()
     val_acc,   val_loss   = evaluate()
 
@@ -285,28 +321,40 @@ for epoch in range(1, EPOCHS + 1):
                    SAVE_PATH)
         best_tag = '  ← best'
 
-    log(f'{epoch:>6}  {train_acc:>8.2f}%  {train_loss:>10.4f}  '
+    # Always save last epoch checkpoint
+    torch.save({'epoch': epoch,
+                'state_dict': model.state_dict(),
+                'last_val_acc': val_acc,
+                'run_name': RUN_NAME},
+               os.path.join(OUTPUT_DIR, 'last_model.pth'))
+    log(f'{epoch:>6}  {phase:>8}  {train_acc:>8.2f}%  {train_loss:>10.4f}  '
         f'{val_acc:>7.2f}%  {val_loss:>8.4f}  {current_lr:>9.6f}{best_tag}')
 
-
-# ------ Final summary -----------------------------------------
+# ------ Final summary -------------------------------------
 summary = [
-    '-' * 60,
+    '-' * 65,
     f'Best val accuracy : {best_val:.2f}%',
     f'Checkpoint saved  : {SAVE_PATH}',
     f'Log saved         : {LOG_FILE}',
     f'Config saved      : {CFG_FILE}',
     f'Plot saved        : {PLOT_FILE}',
+    f'Last checkpoint   : {os.path.join(OUTPUT_DIR, "last_model.pth")}',
 ]
 for line in summary:
     log(line)
-
 log_fh.close()
 
-# ------ Save plot ---------------------------------------------
+# ------ Save plot -----------------------------------------
 epochs_axis = list(range(1, EPOCHS + 1))
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
-fig.suptitle(f'{RUN_NAME}\nBest val: {best_val:.2f}%', fontsize=11)
+fig.suptitle(f'{RUN_NAME}\nBest val: {best_val:.2f}%', fontsize=10)
+
+# Shade the noisy phase on both plots
+if NOISE_VARIANCE > 0 and NOISE_PHASE_EPOCHS < EPOCHS:
+    ax1.axvspan(1, NOISE_PHASE_EPOCHS, alpha=0.08, color='red',
+                label=f'Noisy phase (ep 1-{NOISE_PHASE_EPOCHS})')
+    ax2.axvspan(1, NOISE_PHASE_EPOCHS, alpha=0.08, color='red',
+                label=f'Noisy phase (ep 1-{NOISE_PHASE_EPOCHS})')
 
 # Accuracy
 ax1.plot(epochs_axis, train_accs, label='Train acc', color='steelblue')
@@ -318,7 +366,7 @@ for i, (label, acc) in enumerate(REFERENCE_LINES.items()):
 ax1.set_xlabel('Epoch')
 ax1.set_ylabel('Accuracy (%)')
 ax1.set_title('Accuracy')
-ax1.legend(fontsize=8)
+ax1.legend(fontsize=7)
 ax1.grid(True, alpha=0.3)
 
 # Loss
@@ -327,7 +375,7 @@ ax2.plot(epochs_axis, val_losses,   label='Val loss',   color='darkorange')
 ax2.set_xlabel('Epoch')
 ax2.set_ylabel('Loss')
 ax2.set_title('Loss')
-ax2.legend(fontsize=8)
+ax2.legend(fontsize=7)
 ax2.grid(True, alpha=0.3)
 
 plt.tight_layout()
