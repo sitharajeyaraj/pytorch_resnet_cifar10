@@ -11,14 +11,17 @@
 # NOISE EXPERIMENT:
 #   Set NOISE_VARIANCE > 0 to add Gaussian noise N(0, variance)
 #   to quantized activations during training only.
-#   NOISE_PHASE_EPOCHS controls how many epochs noise is active.
-#   After NOISE_PHASE_EPOCHS, noise is switched off automatically.
-#   Set NOISE_PHASE_EPOCHS = EPOCHS to keep noise for all epochs.
+#   Val always uses clean levels — noise never added during eval.
+#
+# NOISE MODES (controlled by NOISE_SCHEDULE):
+#   'fixed'  — constant noise for NOISE_PHASE_EPOCHS, then clean
+#   'linear' — noise linearly decays from NOISE_STD to 0 over
+#              NOISE_PHASE_EPOCHS, then clean
 #
 # OUTPUTS (auto-saved to experiments/<run_name>/):
 #   config.txt          — exact settings used
 #   log.txt             — epoch-by-epoch results
-#   best_model.pth      — best checkpoint
+#   best_model.pth      — best val accuracy checkpoint
 #   last_model.pth      — checkpoint after final epoch
 #   training_curves.png — accuracy + loss plot
 # ==============================================================
@@ -40,7 +43,7 @@ import resnet
 # CONFIG — change only this block for each experiment
 # ==============================================================
 
-EXPERIMENT       = '8level-weight-ste-noise-var0075'
+EXPERIMENT       = '8level-weight-ste-noise-linear-decay'
 
 # --- Checkpoint -------------------------------------------
 CHECKPOINT       = 'experiments/8level-weight-ste_act-ste_wgt-ste_lr1e-3_nosched/best_model.pth'
@@ -63,9 +66,13 @@ W_BETA      = 5.0
 # --- Noise settings ---------------------------------------
 # Noise N(0, NOISE_VARIANCE) added to quantized activations
 # during training only. Val always uses clean levels.
-NOISE_VARIANCE   = 0.075             # variance — std = sqrt(0.075) ≈ 0.274
-NOISE_PHASE_EPOCHS = 130           # noise ON for first N epochs
-#                                   # set equal to EPOCHS for all-epoch noise
+NOISE_VARIANCE     = 0.05         # starting variance
+NOISE_PHASE_EPOCHS = 130          # noise active for first N epochs
+
+# NOISE_SCHEDULE:
+#   'fixed'  — constant noise throughout noisy phase
+#   'linear' — linearly decay from NOISE_STD to 0 over noisy phase
+NOISE_SCHEDULE     = 'linear'
 
 # --- Training schedule ------------------------------------
 EPOCHS           = 150
@@ -88,24 +95,25 @@ GPU_ID = int(os.environ.get('GPU_ID', 0))
 # END CONFIG
 # ==============================================================
 
-# Compute std from variance
 NOISE_STD = math.sqrt(NOISE_VARIANCE)
 
-# ------ Build run name and output folder ------------------
-sched_tag = f'step{STEP_SIZE}' if USE_SCHEDULER else 'nosched'
-lr_tag    = f'lr{LR:.0e}'.replace('e-0', 'e-').replace('e+0', 'e')
-act_tag   = f'act-{ACT_GRAD}'
-wgt_tag   = f'wgt-{WEIGHT_GRAD}' if QUANTIZE_WEIGHTS else 'wgt-float'
-noise_tag = f'noise{NOISE_VARIANCE}-{NOISE_PHASE_EPOCHS}ep' if NOISE_VARIANCE > 0 else 'nonoise'
+# ------ Build run name ------------------------------------
+sched_tag  = f'step{STEP_SIZE}' if USE_SCHEDULER else 'nosched'
+lr_tag     = f'lr{LR:.0e}'.replace('e-0', 'e-').replace('e+0', 'e')
+act_tag    = f'act-{ACT_GRAD}'
+wgt_tag    = f'wgt-{WEIGHT_GRAD}' if QUANTIZE_WEIGHTS else 'wgt-float'
+noise_tag  = (f'noise{NOISE_VARIANCE}-{NOISE_SCHEDULE}-{NOISE_PHASE_EPOCHS}ep'
+              if NOISE_VARIANCE > 0 else 'nonoise')
 
 RUN_NAME   = f'{EXPERIMENT}_{act_tag}_{wgt_tag}_{lr_tag}_{sched_tag}_{noise_tag}'
 OUTPUT_DIR = os.path.join('experiments', RUN_NAME)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-LOG_FILE  = os.path.join(OUTPUT_DIR, 'log.txt')
-SAVE_PATH = os.path.join(OUTPUT_DIR, 'best_model.pth')
-PLOT_FILE = os.path.join(OUTPUT_DIR, 'training_curves.png')
-CFG_FILE  = os.path.join(OUTPUT_DIR, 'config.txt')
+LOG_FILE   = os.path.join(OUTPUT_DIR, 'log.txt')
+SAVE_PATH  = os.path.join(OUTPUT_DIR, 'best_model.pth')
+LAST_PATH  = os.path.join(OUTPUT_DIR, 'last_model.pth')
+PLOT_FILE  = os.path.join(OUTPUT_DIR, 'training_curves.png')
+CFG_FILE   = os.path.join(OUTPUT_DIR, 'config.txt')
 
 # ------ Helper: write to terminal and log -----------------
 log_fh = open(LOG_FILE, 'w')
@@ -136,6 +144,7 @@ def save_config():
         f'NOISE_VARIANCE     = {NOISE_VARIANCE}',
         f'NOISE_STD          = {NOISE_STD:.4f}',
         f'NOISE_PHASE_EPOCHS = {NOISE_PHASE_EPOCHS}',
+        f'NOISE_SCHEDULE     = {NOISE_SCHEDULE}',
         f'',
         f'EPOCHS             = {EPOCHS}',
         f'LR                 = {LR}',
@@ -218,20 +227,21 @@ cudnn.benchmark = True
 save_config()
 
 header_lines = [
-    '=' * 65,
-    f'RUN    : {RUN_NAME}',
-    f'OUTPUT : {OUTPUT_DIR}',
-    f'Device : {device}',
-    f'Start  : {CHECKPOINT}',
-    f'Quant  : input={QUANTIZE_INPUT}  act={QUANTIZE_ACT}  weights={QUANTIZE_WEIGHTS}',
-    f'Grad   : act={ACT_GRAD}  weight={WEIGHT_GRAD}',
-    f'Noise  : variance={NOISE_VARIANCE}  std={NOISE_STD:.4f}  phase={NOISE_PHASE_EPOCHS} epochs',
+    '=' * 70,
+    f'RUN      : {RUN_NAME}',
+    f'OUTPUT   : {OUTPUT_DIR}',
+    f'Device   : {device}',
+    f'Start    : {CHECKPOINT}',
+    f'Quant    : input={QUANTIZE_INPUT}  act={QUANTIZE_ACT}  weights={QUANTIZE_WEIGHTS}',
+    f'Grad     : act={ACT_GRAD}  weight={WEIGHT_GRAD}',
+    f'Noise    : variance={NOISE_VARIANCE}  std={NOISE_STD:.4f}  '
+    f'schedule={NOISE_SCHEDULE}  phase={NOISE_PHASE_EPOCHS} epochs',
     f'LR={LR}  Epochs={EPOCHS}  Scheduler={USE_SCHEDULER}',
-    f'Missing keys (new layers): {len(missing)}',
-    '=' * 65,
-    f'{"Epoch":>6}  {"Phase":>8}  {"TrainAcc":>9}  {"TrainLoss":>10}  '
+    f'Missing keys: {len(missing)}',
+    '=' * 70,
+    f'{"Epoch":>6}  {"Phase":>16}  {"TrainAcc":>9}  {"TrainLoss":>10}  '
     f'{"ValAcc":>8}  {"ValLoss":>8}  {"LR":>9}',
-    '-' * 65,
+    '-' * 70,
 ]
 for line in header_lines:
     log(line)
@@ -256,7 +266,7 @@ def train_one_epoch():
 
 
 def evaluate():
-    model.eval()   # model.eval() ensures noise is NOT added during validation
+    model.eval()
     correct = total = 0
     running_loss = 0.0
     with torch.no_grad():
@@ -273,31 +283,38 @@ def evaluate():
 
 # ------ Reference lines for plot --------------------------
 REFERENCE_LINES = {
-    'Float baseline'            : 91.47,
-    '+ 8-level input'           : 89.02,
-    '+ Acts STE, float weights' : 86.01,
-    '+ Acts+Wgt STE (82.67%)'  : 82.67,
+    'Float baseline'             : 91.47,
+    '+ 8-level input'            : 89.02,
+    '+ Acts STE, float weights'  : 86.01,
+    '+ Acts+Wgt STE (82.67%)'   : 82.67,
+    '+ Noise var=0.025 (83.84%)' : 83.84,
 }
 
 # ------ Training loop -------------------------------------
 train_accs, train_losses = [], []
 val_accs,   val_losses   = [], []
+noise_stds  = []
 best_val  = 0.0
 
 for epoch in range(1, EPOCHS + 1):
 
-    # --- Noise phase control ---
-    # Epochs 1 to NOISE_PHASE_EPOCHS : noise ON
-    # Epochs NOISE_PHASE_EPOCHS+1 to EPOCHS : noise OFF
-    if NOISE_VARIANCE > 0:
-        if epoch <= NOISE_PHASE_EPOCHS:
-            model.set_noise(True)
-            phase = 'NOISY'
-        else:
-            model.set_noise(False)
-            phase = 'CLEAN'
+    # --- Noise schedule control ---------------------------
+    if NOISE_VARIANCE > 0 and epoch <= NOISE_PHASE_EPOCHS:
+        if NOISE_SCHEDULE == 'linear':
+            # Linear decay: full noise at epoch 1, zero at epoch NOISE_PHASE_EPOCHS
+            fraction    = 1.0 - (epoch - 1) / (NOISE_PHASE_EPOCHS - 1)
+            current_std = NOISE_STD * fraction
+        else:  # 'fixed'
+            current_std = NOISE_STD
+        model.set_noise_std(current_std)
+        model.set_noise(True)
+        phase = f'NOISY(std={current_std:.4f})'
     else:
+        current_std = 0.0
+        model.set_noise(False)
         phase = 'CLEAN'
+
+    noise_stds.append(current_std)
 
     train_acc, train_loss = train_one_epoch()
     val_acc,   val_loss   = evaluate()
@@ -321,24 +338,25 @@ for epoch in range(1, EPOCHS + 1):
                    SAVE_PATH)
         best_tag = '  ← best'
 
-    # Always save last epoch checkpoint
+    # Save last epoch checkpoint
     torch.save({'epoch': epoch,
                 'state_dict': model.state_dict(),
                 'last_val_acc': val_acc,
                 'run_name': RUN_NAME},
-               os.path.join(OUTPUT_DIR, 'last_model.pth'))
-    log(f'{epoch:>6}  {phase:>8}  {train_acc:>8.2f}%  {train_loss:>10.4f}  '
+               LAST_PATH)
+
+    log(f'{epoch:>6}  {phase:>16}  {train_acc:>8.2f}%  {train_loss:>10.4f}  '
         f'{val_acc:>7.2f}%  {val_loss:>8.4f}  {current_lr:>9.6f}{best_tag}')
 
 # ------ Final summary -------------------------------------
 summary = [
-    '-' * 65,
+    '-' * 70,
     f'Best val accuracy : {best_val:.2f}%',
-    f'Checkpoint saved  : {SAVE_PATH}',
+    f'Best checkpoint   : {SAVE_PATH}',
+    f'Last checkpoint   : {LAST_PATH}',
     f'Log saved         : {LOG_FILE}',
     f'Config saved      : {CFG_FILE}',
     f'Plot saved        : {PLOT_FILE}',
-    f'Last checkpoint   : {os.path.join(OUTPUT_DIR, "last_model.pth")}',
 ]
 for line in summary:
     log(line)
@@ -346,15 +364,14 @@ log_fh.close()
 
 # ------ Save plot -----------------------------------------
 epochs_axis = list(range(1, EPOCHS + 1))
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
-fig.suptitle(f'{RUN_NAME}\nBest val: {best_val:.2f}%', fontsize=10)
+fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 5))
+fig.suptitle(f'{RUN_NAME}\nBest val: {best_val:.2f}%', fontsize=9)
 
-# Shade the noisy phase on both plots
-if NOISE_VARIANCE > 0 and NOISE_PHASE_EPOCHS < EPOCHS:
-    ax1.axvspan(1, NOISE_PHASE_EPOCHS, alpha=0.08, color='red',
-                label=f'Noisy phase (ep 1-{NOISE_PHASE_EPOCHS})')
-    ax2.axvspan(1, NOISE_PHASE_EPOCHS, alpha=0.08, color='red',
-                label=f'Noisy phase (ep 1-{NOISE_PHASE_EPOCHS})')
+# Shade noisy phase
+if NOISE_VARIANCE > 0:
+    for ax in [ax1, ax2]:
+        ax.axvspan(1, NOISE_PHASE_EPOCHS, alpha=0.08, color='red',
+                   label=f'Noisy phase (ep 1-{NOISE_PHASE_EPOCHS})')
 
 # Accuracy
 ax1.plot(epochs_axis, train_accs, label='Train acc', color='steelblue')
@@ -366,7 +383,7 @@ for i, (label, acc) in enumerate(REFERENCE_LINES.items()):
 ax1.set_xlabel('Epoch')
 ax1.set_ylabel('Accuracy (%)')
 ax1.set_title('Accuracy')
-ax1.legend(fontsize=7)
+ax1.legend(fontsize=6)
 ax1.grid(True, alpha=0.3)
 
 # Loss
@@ -377,6 +394,14 @@ ax2.set_ylabel('Loss')
 ax2.set_title('Loss')
 ax2.legend(fontsize=7)
 ax2.grid(True, alpha=0.3)
+
+# Noise std over epochs
+ax3.plot(epochs_axis, noise_stds, color='red', label='Noise std')
+ax3.set_xlabel('Epoch')
+ax3.set_ylabel('Noise std')
+ax3.set_title('Noise Schedule')
+ax3.legend(fontsize=7)
+ax3.grid(True, alpha=0.3)
 
 plt.tight_layout()
 plt.savefig(PLOT_FILE, dpi=150)

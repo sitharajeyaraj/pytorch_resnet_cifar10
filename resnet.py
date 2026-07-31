@@ -8,9 +8,6 @@ __all__ = ['ResNet', 'resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110'
 
 # ============================================================
 # 8-LEVEL INPUT QUANTIZER
-# Snaps each normalized pixel to the nearest of 8 uniformly
-# spaced levels between -2.75 and +2.75.
-# No STE needed — inputs are data, not learnable parameters.
 # ============================================================
 class Input8Level(nn.Module):
     def __init__(self):
@@ -26,14 +23,9 @@ class Input8Level(nn.Module):
 
 # ============================================================
 # ACTIVATION QUANTIZERS
-# Two options for the backward pass:
-#   STE      — identity gradient (pass grad straight through)
-#   TanhGrad — stacked tanh gradient (large near boundaries)
-# Both use the same hard argmin snap in the forward pass.
 # ============================================================
 
 class Act8LevelSTE(torch.autograd.Function):
-    """Forward: hard argmin snap. Backward: clipped identity (STE)."""
     @staticmethod
     def forward(ctx, x, levels):
         dists = (x.unsqueeze(-1) - levels).abs()
@@ -50,7 +42,6 @@ class Act8LevelSTE(torch.autograd.Function):
 
 
 class Act8LevelTanhGrad(torch.autograd.Function):
-    """Forward: hard argmin snap. Backward: stacked tanh gradient."""
     @staticmethod
     def forward(ctx, x, levels, beta):
         transitions = (levels[:-1] + levels[1:]) / 2.0
@@ -82,9 +73,10 @@ class Activation8Level(nn.Module):
     beta       : sharpness for tanhgrad backward (ignored for ste)
     noise_std  : std of Gaussian noise added AFTER snap during training.
                  0.0 = no noise (default).
+                 For noise annealing, training script updates this each epoch
+                 via model.set_noise_std(new_std).
                  Noise is NEVER added during validation (model.eval()).
-    add_noise  : master switch — set to False to disable noise completely
-                 (used to turn off noise after phase 1)
+    add_noise  : master switch — set to False to disable noise completely.
     """
     def __init__(self, grad_type='ste', act_clip=1.0, beta=5.0,
                  noise_std=0.0):
@@ -93,18 +85,15 @@ class Activation8Level(nn.Module):
         self.register_buffer('levels', levels)
         self.grad_type  = grad_type
         self.beta       = beta
-        self.noise_std  = noise_std   # std = sqrt(variance) = sqrt(0.5)
-        self.add_noise  = False       # switched on/off by training script
+        self.noise_std  = noise_std
+        self.add_noise  = False
 
     def forward(self, x):
-        # Step 1 — hard snap to nearest level
         if self.grad_type == 'tanhgrad':
             out = Act8LevelTanhGrad.apply(x, self.levels, self.beta)
         else:
             out = Act8LevelSTE.apply(x, self.levels)
 
-        # Step 2 — add noise only during training and only when enabled
-        # self.training is True during model.train(), False during model.eval()
         if self.add_noise and self.training and self.noise_std > 0.0:
             noise = torch.randn_like(out) * self.noise_std
             out   = out + noise
@@ -117,7 +106,6 @@ class Activation8Level(nn.Module):
 # ============================================================
 
 class Weight8LevelSTE(torch.autograd.Function):
-    """Forward: hard argmin snap. Backward: clipped identity (STE)."""
     @staticmethod
     def forward(ctx, w, levels):
         dists = (w.unsqueeze(-1) - levels).abs()
@@ -134,7 +122,6 @@ class Weight8LevelSTE(torch.autograd.Function):
 
 
 class Weight8LevelTanhGrad(torch.autograd.Function):
-    """Forward: hard argmin snap. Backward: stacked tanh gradient."""
     @staticmethod
     def forward(ctx, w, levels, beta):
         transitions = (levels[:-1] + levels[1:]) / 2.0
@@ -326,6 +313,13 @@ class ResNet(nn.Module):
             if isinstance(m, Activation8Level):
                 m.add_noise = on
 
+    def set_noise_std(self, std: float):
+        """Update noise std for all Activation8Level layers.
+        Used for noise annealing — call every epoch with the new std value."""
+        for m in self.modules():
+            if isinstance(m, Activation8Level):
+                m.noise_std = std
+
     def set_act_beta(self, beta: float):
         for m in self.modules():
             if isinstance(m, Activation8Level):
@@ -375,8 +369,8 @@ def test(net):
     print("Total number of params", total_params)
 
 if __name__ == "__main__":
-    print("Testing resnet20 — STE, noise_std=0.707:")
+    print("Testing resnet20 — STE, noise_std=0.224:")
     net = resnet20(quantize_input=True, quantize_act=True, quantize_weights=True,
-                   act_grad='ste', weight_grad='ste', noise_std=0.707)
+                   act_grad='ste', weight_grad='ste', noise_std=0.224)
     test(net)
     print("OK")
