@@ -12,6 +12,7 @@
 #   config.txt          — exact settings used for this run
 #   log.txt             — epoch-by-epoch train/val accuracy and loss
 #   best_model.pth      — best checkpoint
+#   last_model.pth      — checkpoint after final epoch
 #   training_curves.png — accuracy + loss plot
 # ==============================================================
 
@@ -31,7 +32,7 @@ import resnet
 # CONFIG — change only this block for each experiment
 # ==============================================================
 
-EXPERIMENT       = '8level-weight-ste'
+EXPERIMENT       = '8level-weight-ste-baseline-150ep'
 
 # --- Checkpoint paths ------------------------------------------
 CHECKPOINT       = '8level_act_clip1_best.pth'   # where to START from
@@ -52,7 +53,7 @@ ACT_BETA    = 5.0         # ignored if ACT_GRAD='ste'
 W_BETA      = 5.0         # ignored if WEIGHT_GRAD='ste'
 
 # --- Training schedule -----------------------------------------
-EPOCHS           = 100
+EPOCHS           = 150
 LR               = 1e-3
 
 USE_SCHEDULER    = False
@@ -284,6 +285,12 @@ for epoch in range(1, EPOCHS + 1):
                     'run_name': RUN_NAME},
                    SAVE_PATH)
         best_tag = '  ← best'
+    # Save last epoch checkpoint
+    torch.save({'epoch': epoch,
+                'state_dict': model.state_dict(),
+                'last_val_acc': val_acc,
+                'run_name': RUN_NAME},
+               os.path.join(OUTPUT_DIR, 'last_model.pth'))
 
     log(f'{epoch:>6}  {train_acc:>8.2f}%  {train_loss:>10.4f}  '
         f'{val_acc:>7.2f}%  {val_loss:>8.4f}  {current_lr:>9.6f}{best_tag}')
@@ -297,6 +304,7 @@ summary = [
     f'Log saved         : {LOG_FILE}',
     f'Config saved      : {CFG_FILE}',
     f'Plot saved        : {PLOT_FILE}',
+    f'Last checkpoint   : {os.path.join(OUTPUT_DIR, "last_model.pth")}',
 ]
 for line in summary:
     log(line)
