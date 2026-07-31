@@ -1,0 +1,69 @@
+=================================================================
+RUN    : 8level-weight-ste-noise-finetune_act-ste_wgt-ste_lr1e-3_nosched_nonoise
+OUTPUT : experiments/8level-weight-ste-noise-finetune_act-ste_wgt-ste_lr1e-3_nosched_nonoise
+Device : cuda:0
+Start  : experiments/8level-weight-ste-noise_act-ste_wgt-ste_lr1e-3_nosched_noise0.05-130ep/best_model.pth
+Quant  : input=True  act=True  weights=True
+Grad   : act=ste  weight=ste
+Noise  : variance=0.0  std=0.0000  phase=0 epochs
+LR=0.001  Epochs=50  Scheduler=False
+Missing keys (new layers): 0
+=================================================================
+ Epoch     Phase   TrainAcc   TrainLoss    ValAcc   ValLoss         LR
+-----------------------------------------------------------------
+     1     CLEAN     86.75%      0.3829    83.72%    0.4863   0.001000  ← best
+     2     CLEAN     86.74%      0.3814    82.78%    0.5286   0.001000
+     3     CLEAN     86.56%      0.3839    82.03%    0.5407   0.001000
+     4     CLEAN     86.90%      0.3806    80.40%    0.5822   0.001000
+     5     CLEAN     86.75%      0.3792    83.25%    0.5000   0.001000
+     6     CLEAN     86.77%      0.3795    83.28%    0.5069   0.001000
+     7     CLEAN     87.09%      0.3745    83.24%    0.4891   0.001000
+     8     CLEAN     86.87%      0.3760    83.43%    0.4913   0.001000
+     9     CLEAN     87.03%      0.3716    80.64%    0.5978   0.001000
+    10     CLEAN     87.21%      0.3713    83.32%    0.5006   0.001000
+    11     CLEAN     87.06%      0.3692    82.55%    0.5149   0.001000
+    12     CLEAN     87.18%      0.3693    81.50%    0.5521   0.001000
+    13     CLEAN     87.18%      0.3667    80.38%    0.6267   0.001000
+    14     CLEAN     87.01%      0.3713    83.11%    0.5314   0.001000
+    15     CLEAN     87.13%      0.3662    82.12%    0.5620   0.001000
+    16     CLEAN     87.34%      0.3666    82.47%    0.5555   0.001000
+    17     CLEAN     87.01%      0.3695    82.95%    0.4998   0.001000
+    18     CLEAN     87.27%      0.3643    82.30%    0.5168   0.001000
+    19     CLEAN     87.26%      0.3668    80.93%    0.5973   0.001000
+    20     CLEAN     87.53%      0.3619    81.46%    0.5864   0.001000
+    21     CLEAN     87.40%      0.3588    82.46%    0.5138   0.001000
+    22     CLEAN     87.36%      0.3625    82.84%    0.5104   0.001000
+    23     CLEAN     87.27%      0.3627    82.59%    0.5316   0.001000
+    24     CLEAN     87.37%      0.3620    82.72%    0.5163   0.001000
+    25     CLEAN     87.39%      0.3598    80.45%    0.5977   0.001000
+    26     CLEAN     87.35%      0.3602    80.72%    0.5986   0.001000
+    27     CLEAN     87.46%      0.3570    81.06%    0.5688   0.001000
+    28     CLEAN     87.53%      0.3585    83.67%    0.4840   0.001000
+    29     CLEAN     87.38%      0.3588    83.24%    0.5053   0.001000
+    30     CLEAN     87.52%      0.3559    81.40%    0.5580   0.001000
+    31     CLEAN     87.62%      0.3567    80.38%    0.5961   0.001000
+    32     CLEAN     87.63%      0.3558    82.18%    0.5444   0.001000
+    33     CLEAN     87.66%      0.3550    80.66%    0.5737   0.001000
+    34     CLEAN     87.48%      0.3553    81.77%    0.5552   0.001000
+    35     CLEAN     87.63%      0.3563    78.65%    0.6570   0.001000
+    36     CLEAN     87.46%      0.3570    81.21%    0.5826   0.001000
+    37     CLEAN     87.54%      0.3555    81.65%    0.5424   0.001000
+    38     CLEAN     87.67%      0.3558    82.90%    0.5249   0.001000
+    39     CLEAN     87.69%      0.3551    83.70%    0.5010   0.001000
+    40     CLEAN     87.58%      0.3541    82.26%    0.5537   0.001000
+    41     CLEAN     87.58%      0.3519    83.61%    0.4811   0.001000
+    42     CLEAN     87.72%      0.3488    81.92%    0.5686   0.001000
+    43     CLEAN     87.60%      0.3538    82.46%    0.5290   0.001000
+    44     CLEAN     87.73%      0.3486    79.90%    0.6154   0.001000
+    45     CLEAN     87.59%      0.3547    80.26%    0.6012   0.001000
+    46     CLEAN     87.67%      0.3495    80.83%    0.6008   0.001000
+    47     CLEAN     87.71%      0.3520    83.11%    0.5190   0.001000
+    48     CLEAN     87.56%      0.3523    79.24%    0.6540   0.001000
+    49     CLEAN     87.96%      0.3451    79.08%    0.6533   0.001000
+    50     CLEAN     87.97%      0.3451    82.31%    0.5459   0.001000
+-----------------------------------------------------------------
+Best val accuracy : 83.72%
+Checkpoint saved  : experiments/8level-weight-ste-noise-finetune_act-ste_wgt-ste_lr1e-3_nosched_nonoise/best_model.pth
+Log saved         : experiments/8level-weight-ste-noise-finetune_act-ste_wgt-ste_lr1e-3_nosched_nonoise/log.txt
+Config saved      : experiments/8level-weight-ste-noise-finetune_act-ste_wgt-ste_lr1e-3_nosched_nonoise/config.txt
+Plot saved        : experiments/8level-weight-ste-noise-finetune_act-ste_wgt-ste_lr1e-3_nosched_nonoise/training_curves.png
